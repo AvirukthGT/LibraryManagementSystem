@@ -79,3 +79,29 @@ CREATE TABLE return_status
             return_book_isbn VARCHAR(50),
             
 );
+
+
+ALTER TABLE issued_status 
+add constraint fk_members
+foreign key (issued_member_id)
+references members(member_id);
+
+ALTER TABLE issued_status 
+add constraint fk_books
+foreign key (issued_book_isbn)
+references books(isbn);
+
+ALTER TABLE issued_status 
+add constraint fk_employee
+foreign key (issued_emp_id)
+references employee(emp_id);
+
+ALTER TABLE employee
+add constraint fk_branch
+foreign key (branch_id)
+references branch(branch_id);
+
+ALTER TABLE return_status 
+add constraint fk_issued_status
+foreign key (issued_id)
+references issued_status(issued_id)
