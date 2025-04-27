@@ -1,183 +1,185 @@
---Library Management System--
+/* ===========================================
+   LIBRARY MANAGEMENT SYSTEM SQL QUERIES
+=========================================== */
 
-select * from books;
-select * from branch;
-select * from employee;
-select * from issued_status;
-select * from members;
-select * from return_status;
+-- View all records from key tables
+SELECT * FROM books;
+SELECT * FROM branch;
+SELECT * FROM employee;
+SELECT * FROM issued_status;
+SELECT * FROM members;
+SELECT * FROM return_status;
 
+-------------------------------------------------------------
+-- Identify Members with Overdue Books (>30 days)
+-------------------------------------------------------------
+SELECT 
+    ist.issued_member_id,
+    m.member_name,
+    b.book_title,
+    ist.issued_date,
+    CURRENT_DATE - ist.issued_date AS overdue_days
+FROM issued_status AS ist
+JOIN members AS m 
+    ON ist.issued_member_id = m.member_id
+JOIN books AS b
+    ON b.isbn = ist.issued_book_isbn
+LEFT JOIN return_status AS rs
+    ON rs.issued_id = ist.issued_id
+WHERE rs.return_date IS NULL 
+  AND (CURRENT_DATE - ist.issued_date) > 30
+ORDER BY overdue_days DESC;
 
--- Identifying members who have overdue books (assume a 30-day return period). Display the member's_id, member's name, book title, issue date, and days overdue.
+-------------------------------------------------------------
+-- Update Book Status to 'Yes' When Returned
+-- (Manual Approach Example - NOT IDEAL)
+-------------------------------------------------------------
+SELECT * FROM books 
+WHERE isbn = '978-0-451-52994-2';
 
-select 
-	ist.issued_member_id,
-	m.member_name,
-	b.book_title,
-	ist.issued_date,
-	current_date-ist.issued_date as overdue_days
-from issued_status as ist
-join 
-members as m 
-	on ist.issued_member_id=m.member_id
-join
-books as b
-	on b.isbn=ist.issued_book_isbn
-left join
-return_status as rs
-	on rs.issued_id =ist.issued_id
-where return_date is NULL 
-and (current_date-ist.issued_date)>30
-order by
-5 desc
+SELECT * FROM issued_status
+WHERE issued_book_isbn = '978-0-451-52994-2';
 
---  Update  status of books in the books table to "Yes" when they are returned (based on entries in the return_status table).
+SELECT * FROM return_status 
+WHERE issued_id = 'IS130';
 
---Manual Approach-- NOT IDEAL
+UPDATE books 
+SET status = 'yes' 
+WHERE isbn = '978-0-451-52994-2';
 
-select * from books 
-where isbn='978-0-451-52994-2'
+-------------------------------------------------------------
+-- Stored Procedure: Handle Book Return & Update Status
+-------------------------------------------------------------
+CREATE OR REPLACE PROCEDURE add_return_records(
+    p_return_id VARCHAR(10),
+    p_issued_id VARCHAR(20),
+    p_book_quality VARCHAR(20)
+)
+LANGUAGE plpgsql
+AS $$
+DECLARE
+    v_isbn VARCHAR(50);
+    v_book_name VARCHAR(60);
+BEGIN
+    -- Insert return record
+    INSERT INTO return_status(return_id, issued_id, return_date, book_quality) 
+    VALUES (p_return_id, p_issued_id, CURRENT_DATE, p_book_quality);
 
-select * from issued_status
-where issued_book_isbn='978-0-451-52994-2'
+    -- Get book details from issued_status
+    SELECT issued_book_isbn, issued_book_name 
+    INTO v_isbn, v_book_name 
+    FROM issued_status
+    WHERE issued_id = p_issued_id;
 
-select * from return_status where issued_id= 'IS130'
+    -- Update book status to 'yes' (available)
+    UPDATE books 
+    SET status = 'yes' 
+    WHERE isbn = v_isbn;
 
-update books set status = 'no' where isbn ='978-0-451-52994-2'
+    -- Confirmation message
+    RAISE NOTICE 'Thank You for Returning the Book: %', v_book_name;
+END
+$$;
 
---Store Procedures
-CREATE OR REPLACE PROCEDURE add_return_records(p_return_id varchar(10),p_issued_id varchar(20),p_book_quality varchar(20))
-language plpgsql
-as $$
+-- Test the procedure
+CALL add_return_records('RS138', 'IS135', 'Good');
 
+-------------------------------------------------------------
+-- Branch Performance Report: Books Issued, Returned & Revenue
+-------------------------------------------------------------
+CREATE TABLE branch_report AS
+SELECT 
+    b.branch_id,
+    b.manager_id,
+    COUNT(ist.issued_id) AS num_books_issued,
+    COUNT(rs.return_id) AS num_books_returned,
+    SUM(bk.rental_price) AS total_revenue
+FROM issued_status AS ist
+JOIN employee AS e 
+    ON e.emp_id = ist.issued_emp_id
+JOIN branch AS b
+    ON e.branch_id = b.branch_id
+LEFT JOIN return_status AS rs
+    ON rs.issued_id = ist.issued_id
+JOIN books AS bk 
+    ON ist.issued_book_isbn = bk.isbn
+GROUP BY b.branch_id, b.manager_id;
 
-declare
-	v_isbn varchar(50);
-	v_book_name varchar(60);
-begin
-	--Inserting into return_status
-	insert into return_status(return_id,issued_id,return_date,book_quality) 
-	values 
-	(p_return_id,p_issued_id,current_date,p_book_quality);
+SELECT * FROM branch_report;
 
-	select issued_book_isbn,issued_book_name into v_isbn,v_book_name 
-	from issued_status
-	where issued_id=p_issued_id;
+-------------------------------------------------------------
+-- Create Table: Active Members in Last 2 Months
+-------------------------------------------------------------
+DROP TABLE IF EXISTS active_members;
 
-	
-
-	update books 
-	set status = 'yes' 
-	where isbn =   v_isbn;
-
-	raise notice 'Thank You for Returning the Book: %',v_book_name;
-
-end
-$$
-
-call add_return_records('RS138','IS135','Good');
-
-
---Generating a performance report for each branch, showing the number of books issued, the number of books returned, and the total revenue generated from book rentals.
-create table branch_report
-as
-select 
-b.branch_id,
-b.manager_id,
-count(ist.issued_id) as num_books_issued,
-count(rs.return_id) as num_books_returned,
-SUM(bk.rental_price) as total_revenue
-from issued_status as ist
-JOIN
-employee as e 
-on e.emp_id=ist.issued_emp_id
-join branch as b
-on e.branch_id=b.branch_id
-left join return_status as rs
-on rs.issued_id=ist.issued_id
-join 
-books as bk 
-on ist.issued_book_isbn=bk.isbn
-group by 1,2;
-
-select * from branch_report
-
--- New table active_members containing members who have issued at least one book in the last 2 months.
-
-drop table if exists active_members;
-
-CREATE TABLE active_members
-AS
-SELECT * FROM members
-WHERE member_id IN (SELECT 
-                        DISTINCT issued_member_id   
-                    FROM issued_status
-                    WHERE 
-                        issued_date >= CURRENT_DATE - INTERVAL '2 month'
-                    )
-;
+CREATE TABLE active_members AS
+SELECT * 
+FROM members
+WHERE member_id IN (
+    SELECT DISTINCT issued_member_id   
+    FROM issued_status
+    WHERE issued_date >= CURRENT_DATE - INTERVAL '2 months'
+);
 
 SELECT * FROM active_members;
 
---Finding the top 3 employees who have processed the most book issues. Display the employee name, number of books processed, and their branch.
+-------------------------------------------------------------
+-- Top 3 Employees by Number of Books Processed
+-------------------------------------------------------------
+SELECT 
+    e.emp_name,
+    COUNT(ist.issued_id) AS no_of_books_issued,
+    b.branch_address 
+FROM employee e 
+JOIN issued_status ist 
+    ON e.emp_id = ist.issued_emp_id 
+JOIN branch b 
+    ON b.branch_id = e.branch_id
+GROUP BY e.emp_name, b.branch_address
+ORDER BY no_of_books_issued DESC
+LIMIT 3;
 
+-------------------------------------------------------------
+-- Stored Procedure: Issue a Book & Update Status
+-------------------------------------------------------------
+CREATE OR REPLACE PROCEDURE issue_book(
+    p_issued_id VARCHAR(10),
+    p_issued_member_id VARCHAR(30),
+    p_issued_book_isbn VARCHAR(30),
+    p_issued_emp_id VARCHAR(10)
+)
+LANGUAGE plpgsql
+AS $$
+DECLARE
+    v_status VARCHAR(10);
+BEGIN
+    -- Check book availability
+    SELECT status INTO v_status
+    FROM books 
+    WHERE isbn = p_issued_book_isbn;
 
-select e.emp_name,count(ist.issued_id) as no_of_books_issued,b.branch_address from employee e join 
-issued_status ist on e.emp_id = ist.issued_emp_id 
-join branch b on b.branch_id=e.branch_id
-group by 1,3
-order by 2 desc
-limit 3
+    -- If available, issue the book
+    IF v_status = 'yes' THEN
+        INSERT INTO issued_status(issued_id, issued_member_id, issued_date, issued_book_isbn, issued_emp_id) 
+        VALUES (p_issued_id, p_issued_member_id, CURRENT_DATE, p_issued_book_isbn, p_issued_emp_id);
 
+        UPDATE books 
+        SET status = 'no' 
+        WHERE isbn = p_issued_book_isbn;
 
-/*
-Stored procedure to manage the status of books in a library system. 
-Description: stored procedure that updates the status of a book in the library based on its issuance. The procedure should function as follows: 
-The stored procedure should take the book_id as an input parameter. The procedure should first check if the book is available (status = 'yes'). 
-If the book is available, it should be issued, and the status in the books table should be updated to 'no'. If the book is not available (status = 'no'), 
-the procedure should return an error message indicating that the book is currently not available.
-*/
+        RAISE NOTICE 'Book ISBN: % issued successfully', p_issued_book_isbn;
+    ELSE
+        RAISE NOTICE 'Book Not Available';
+    END IF;
+END
+$$;
 
-create or replace procedure issue_book(p_issued_id varchar(10),p_issued_member_id varchar(30),p_issued_book_isbn varchar(30),p_issued_emp_id varchar(10))
-language plpgsql
-as $$
-declare
-	v_status varchar(10);
-
-begin
-	SELECT status as v_status
-	from books 
-	where isbn=p_issued_book_isbn;
-
-	IF v_status='yes' then
-		INSERT INTO issued_status(issued_id,issued_member_id,issued_date,issued_book_isbn,issued_emp_id) 
-			VALUES(p_issued_id,p_issued_member_id,current_date,p_issued_book_isbn,p_issued_emp_id);
-			update books 
-			set status = 'no' 
-			where isbn =   p_issued_book_isbn;
-			raise notice 'Book isbn : % issued successfully',p_issued_book_isbn;
-
-			
-	ELSE
-		raise notice 'Book Not Available';
-
-	END IF;
-
-	
-end
-$$
-
--- Testing The procedure
+-- Testing the procedure
 SELECT * FROM books;
--- "978-0-553-29698-2" -- yes
--- "978-0-451-52994-2" -- no
-SELECT * FROM issued_status;
 
 CALL issue_book('IS155', 'C108', '978-0-553-29698-2', 'E104');
 CALL issue_book('IS130', 'C106', '978-0-375-41398-8', 'E104');
 
+-- Check updated book status
 SELECT * FROM books
-WHERE isbn = '978-0-375-41398-8'
-
-
-
+WHERE isbn = '978-0-375-41398-8';
